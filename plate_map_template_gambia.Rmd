@@ -1,0 +1,166 @@
+---
+title: "plate_map_template_gambia"
+author: "William Louie"
+date: "2023-08-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(ggplot2)
+library(reshape2)
+library(parallel)
+library(tools)
+library(data.table)
+library(stringr)
+library(plotly)
+library(tidyverse)
+library(ggrepel)
+
+setwd("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/06_23_run")
+
+## Read allele data.txt
+allele_data <- read.delim('allele_data.txt', header = TRUE) %>% 
+  mutate(SampleName = word(sampleID, 9,11, sep = "_")) %>%
+  mutate(run_date = word(sampleID, 6,8, sep = "_")) %>%
+  mutate(number = word(sampleID, -1, sep = "_"))
+
+
+```
+
+## Plate map, all pools
+
+```{r map_all, message = FALSE, echo = FALSE, warning = FALSE}
+
+map_all_reads <- allele_data %>%
+  group_by(sampleID) %>% 
+  summarise(reads_per_locus = median(reads)) %>%
+  mutate(well_position = word(sampleID, -1, sep = "_")) %>%
+  mutate(row = sub("^([[:alpha:]]*).*", "\\1", well_position)) %>%
+  mutate(col = gsub("[^0-9]", "", well_position))
+
+row_ex <-rep(c("A","B","C","D","E","F","G","H"), times=12)
+col_ex <- rep(1:12, each = 8)
+
+map_all_reads.1 <- map_all_reads %>%
+  group_by(row) %>%
+  mutate(row = 1:length(row)) %>%
+  select(-well_position) %>%
+  filter(row < 97)
+map_all_reads.1$row <- as.factor(row_ex)
+map_all_reads.1$col <- as.factor(col_ex)
+levels(map_all_reads.1$row)
+
+map_all_reads.2 <- map_all_reads %>%
+  group_by(row) %>%
+  mutate(row = 1:length(row)) %>%
+  select(-well_position) %>%
+  filter(row > 97, row < 194)
+map_all_reads.2$row <- as.factor(row_ex)
+map_all_reads.2$col <- as.factor(col_ex)
+levels(map_all_reads.2$row)
+
+plot_plate_map.1 <- function(map_all_reads.1){
+  p <- map_all_reads.1 %>%
+    ggplot(aes(x = col, y = row, text = paste(sampleID))) +
+    geom_tile(aes(fill = reads_per_locus)) +
+    scale_fill_gradient(low = "black", high = "yellow", limits = range(map_all_reads.1$reads_per_locus)) +
+    ylim(rev(levels(map_all_reads.1$row))) + 
+    theme(axis.title = element_blank()) +
+    ggtitle("PLATE1: Median no. reads per locus, across ALL pools")
+  p
+}
+ggplotly(plot_plate_map.1(map_all_reads.1))
+
+plot_plate_map.2 <- function(map_all_reads.2){
+  p <- map_all_reads.2 %>%
+    ggplot(aes(x = col, y = row, text = paste(sampleID))) +
+    geom_tile(aes(fill = reads_per_locus)) +
+    scale_fill_gradient(low = "black", high = "yellow", limits = range(map_all_reads.2$reads_per_locus)) +
+    ylim(rev(levels(map_all_reads.2$row))) + 
+    theme(axis.title = element_blank()) +
+    ggtitle("PLATE2: Median no. reads per locus, across ALL pools")
+  p
+}
+ggplotly(plot_plate_map.2(map_all_reads.2))
+
+
+
+```
+
+## Plate map, pool 1A
+
+```{r map_1A, message = FALSE, echo = FALSE, warning = FALSE}
+
+# Look at only pool1A reads
+map_1A <- allele_data %>%
+  mutate(pool = sapply(strsplit(locus,"-"),tail,1)) %>% 
+  filter(pool == "1A" | pool == "1AB") %>% 
+  group_by(sampleID) %>% 
+  summarise(reads_per_locus = median(reads)) %>%
+  mutate(well_position = word(sampleID, -1, sep = "_")) %>%
+  mutate(row = sub("^([[:alpha:]]*).*", "\\1", well_position)) %>%
+  mutate(col = gsub("[^0-9]", "", well_position))
+map_1A <- map_1A %>%
+  group_by(row) %>%
+  mutate(row = 1:length(row)) %>%
+  select(-well_position) %>%
+  filter(row < 97)
+map_1A$row <- as.factor(row_ex)
+map_1A$col <- as.factor(col_ex)
+levels(map_1A$row)
+
+plot_plate_map1A <- function(map_1A){
+  p1A <- map_1A %>%
+    ggplot(aes(x = col, y = row, text = paste(sampleID))) +
+    geom_tile(aes(fill = reads_per_locus)) +
+    scale_fill_gradient(low = "black", high = "red", limits = (range(map_1A$reads_per_locus))) +
+    ylim(rev(levels(map_1A$row))) + 
+    theme(axis.title = element_blank()) +
+    ggtitle("Median no. reads per locus, pool 1A")
+  p1A
+}
+ggplotly(plot_plate_map1A(map_1A))
+
+
+```
+
+## Plate map, pool 1B
+
+```{r map_1B, message = FALSE, echo = FALSE, warning = FALSE}
+
+# Look at only pool1B reads
+map_1B <- allele_data %>%
+  mutate(pool = sapply(strsplit(locus,"-"),tail,1)) %>% 
+  filter(pool == "1B" | pool == "1AB" | pool == "1B2") %>% 
+  group_by(sampleID) %>% 
+  summarise(reads_per_locus = median(reads)) %>%
+  mutate(well_position = word(sampleID, -1, sep = "_")) %>%
+  mutate(row = sub("^([[:alpha:]]*).*", "\\1", well_position)) %>%
+  mutate(col = gsub("[^0-9]", "", well_position))
+map_1B <- map_1B %>%
+  group_by(row) %>%
+  mutate(row = 1:length(row)) %>%
+  select(-well_position) %>%
+  filter(row < 97)
+map_1B$row <- as.factor(row_ex)
+map_1B$col <- as.factor(col_ex)
+levels(map_1B$row)
+
+plot_plate_map1B <- function(map_1B){
+  p1B <- map_1B %>%
+    ggplot(aes(x = col, y = row, text = paste(sampleID))) +
+    geom_tile(aes(fill = reads_per_locus)) +
+    scale_fill_gradient(low = "black", high = "green", limits = range(map_1B$reads_per_locus)) +
+    ylim(rev(levels(map_1B$row))) + 
+    theme(axis.title = element_blank()) +
+    ggtitle("Median no. reads per locus, pool 1B")
+  p1B
+}
+ggplotly(plot_plate_map1B(map_1B))
+
+
+```
