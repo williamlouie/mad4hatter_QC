@@ -39,7 +39,7 @@ setwd("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads
 ## Read allele data.txt
 allele_data <- read.delim('allele_data.txt', header = TRUE) %>% 
   mutate(SampleName = word(sampleID, 9,11, sep = "_")) %>%
-  mutate(run_date = word(sampleID, 6,8, sep = "_")) %>%
+  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
   mutate(number = word(sampleID, -1, sep = "_"))
 
 # Read sample_coverage.txt
@@ -47,7 +47,7 @@ sample_coverage <- read.table("sample_coverage.txt", sep = "\t", header = T) %>%
   rename(sampleID = SampleName) %>%
   pivot_wider(names_from = X, values_from = NumReads) %>% 
   mutate(SampleName = word(sampleID, 9,11, sep = "_")) %>%
-  mutate(run_date = word(sampleID, 6,8, sep = "_")) %>%
+  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
   mutate(number = word(sampleID, -1, sep = "_")) %>%
   mutate(perc_amplicons = as.numeric(Amplicons)/as.numeric(Input)) 
 
@@ -112,7 +112,7 @@ ggplot(dimer_check, aes(x=reorder(number, -Input), y=Input)) +
   ylab("Total reads") + xlab("Sample number") +
   theme(axis.text = element_text(size = 10), 
           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)) +
-  facet_wrap(~run_date, scales = "free_x") +
+  facet_wrap(~prep_date, scales = "free_x") +
   ggtitle("How many total reads make it to amplicons? (facet by run date)")
 # Plot input/amplicon - percent amplicons
 ggplot(dimer_check) +
@@ -122,7 +122,7 @@ ggplot(dimer_check) +
   theme(axis.text = element_text(size = 10), 
           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)) + 
   scale_y_continuous(limits = c(0,1), expand = c(0, 0)) +
-  facet_wrap(~run_date, scales = "free_x") +
+  facet_wrap(~prep_date, scales = "free_x") +
   ggtitle("What proportion of reads make it to amplicons? (facet by run date)")
 
 print("Overall % dimers (already multiplied x100)")
@@ -744,6 +744,28 @@ moire_input <- data_filt %>%
   rename("sample_id" = "sampleID") %>% 
   distinct()
 write.csv(moire_input, "gambia_moire_input.csv", row.names = F)
+
+```
+
+## Extra
+### rough MOI estimates (No. alleles per locus/ sample)
+
+```{r extra, echo = FALSE, warning = FALSE}
+
+
+ggplot(data = allele_table, aes(x = total_alleles)) +
+  geom_histogram() +
+  ggtitle("Alleles per locus per sample")
+
+allele_table2 <- data_filt %>% 
+  group_by(locus, sampleID) %>% 
+  summarize(total_alleles = n_distinct(allele)) %>% 
+  arrange(-total_alleles)
+
+ggplot(data = allele_table2, aes(x = total_alleles)) +
+  geom_histogram() +
+  ggtitle("FILTERED: Alleles per locus per sample")
+  
 
 ```
 
