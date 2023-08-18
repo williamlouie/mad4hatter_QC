@@ -1,7 +1,7 @@
 ---
 title: "MAD4HATTER QC pipeline - Gambia_Indie"
 output: html_document
-date: "2023-08-03"
+date: "2023-08-18"
 ---
 
 ```{r load_libs, include=FALSE}
@@ -102,35 +102,37 @@ print(sprintf("%s to %s alleles per locus per sample",
 # DIMER CHECK
 
 dimer_check <- sample_coverage[order(sample_coverage$perc_amplicons, decreasing = FALSE),]
+dimer_check <- dimer_check %>%
+  mutate(neg_control = grepl("Neg", sampleID))
 
 # Plot input/amplicon - total reads
 ggplot(dimer_check, aes(x=reorder(number, -Input), y=Input)) + 
   geom_bar(stat = "identity", fill = "grey") +
-  geom_bar(stat = "identity", data = dimer_check, aes(y = Amplicons), fill = "red", alpha = 0.5) +
+  geom_bar(stat = "identity", data = dimer_check, aes(y = Amplicons, fill = neg_control), alpha = 0.8) +
   theme_bw() +
   scale_y_log10() + 
   ylab("Total reads") + xlab("Sample number") +
   theme(axis.text = element_text(size = 10), 
           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)) +
   facet_wrap(~prep_date, scales = "free_x") +
-  ggtitle("How many total reads make it to amplicons? (facet by run date)")
+  ggtitle("How many total reads make it to amplicons? (facet by sample prep date)")
 # Plot input/amplicon - percent amplicons
 ggplot(dimer_check) +
-  geom_col(aes(x = reorder(number, -perc_amplicons), y= perc_amplicons), fill = "red", alpha = 0.5) + 
+  geom_col(aes(x = reorder(number, -perc_amplicons), y= perc_amplicons, fill = neg_control), alpha = 0.8) + 
   ylab("Proportion of reads that are amplicons") + xlab("Sample number") + 
   theme_bw() +
   theme(axis.text = element_text(size = 10), 
           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)) + 
   scale_y_continuous(limits = c(0,1), expand = c(0, 0)) +
   facet_wrap(~prep_date, scales = "free_x") +
-  ggtitle("What proportion of reads make it to amplicons? (facet by run date)")
+  ggtitle("What proportion of reads make it to amplicons? (facet by sample prep date)")
 
 print("Overall % dimers (already multiplied x100)")
 ((sum(dimer_check$Input) - sum(dimer_check$`No Dimers`)) / sum(dimer_check$Input))*100
 
 
-
 ```
+
 ## Negative controls
 #### Do neg ctrls have a lot of reads?
 #### If so, how will you filter them?
@@ -199,8 +201,7 @@ loci_neg
 
 ## Positive controls
 #### Using a known parasite strain at a known density
-#### Alleles should be known
-#### Should be monoclonal (across all loci?)
+#### Alleles should be known, and monoclonal
 
 ```{r pos_ctrls, echo = FALSE, warning = F, message = F}
 
@@ -223,7 +224,7 @@ pos_clone <- allele_data %>%
 pos_clone <- pos_clone %>% 
   group_by(sampleID) %>% 
   count(Clone) %>%
-  mutate(run_date = word(sampleID, 6,8, sep = "_")) %>%
+  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
   mutate(number = word(sampleID, -1, sep = "_"))
 pos_clone_wide <- tidyr::spread(pos_clone, Clone, n)
 pos_clone_wide[is.na(pos_clone_wide)] <- 0
@@ -240,7 +241,7 @@ plot_pos_clones <- function(pos_clone){
   geom_col(aes(fill = Clone)) +
   theme(axis.text.y = element_text(size = 8), axis.text.x = element_blank()) +
   scale_y_continuous(name = "Locus No.", breaks = seq(0,200, by = 50)) +
-  facet_wrap(~run_date, scales = "free_x")
+  facet_wrap(~prep_date, scales = "free_x")
   g_pos
 }
 pos_clone_plot <-  ggplotly(plot_pos_clones(pos_clone))
@@ -249,49 +250,8 @@ pos_clone_plot
 
 ```
 
-## Clonality of samples
-#### Look at ratio of monoclonals/polyclonals
-
-```{r clonality, echo = FALSE, warning = F, message = F}
-
-
-## Look at clonality
-clone <- allele_data %>% 
-  filter(! grepl("Pos", sampleID)) %>% 
-  filter(! grepl("Neg", sampleID)) %>% 
-  distinct(sampleID, locus, asv, .keep_all = TRUE) %>%
-  group_by(sampleID, locus) %>% 
-  summarise(total_alleles = n()) %>%
-  mutate(Clone = ifelse(total_alleles == 1, "Mono", "Poly"))
-clone %<>% group_by(sampleID) %>% count(Clone)
-clone_wide <- tidyr::spread(clone, Clone, n)
-clone_wide[is.na(clone_wide)] <- 0
-clone_wide %<>% mutate(Total_alleles = Mono + Poly) %>% 
-  mutate(Mono_prop = Mono/Total_alleles) %>% 
-  mutate(Poly_prop = Poly/Total_alleles)
-print(sprintf("Mean of total locus = %s, Mean prop. of monoclonal loci = %s, Mean prop. of polyclonal loci = %s",
-              round(mean(clone_wide$Total_alleles),2), 
-              round(mean(clone_wide$Mono_prop),2), 
-              round(mean(clone_wide$Poly_prop),2)))
-
-plot_clones <- function(clone){
-  g <- clone %>%
-  ggplot(aes(x= sampleID, y= n)) +
-  geom_col(aes(fill = Clone)) +
-  theme(axis.text.y = element_text(size = 8), axis.text.x = element_blank()) +
-  scale_y_continuous(name = "Locus No.", breaks = seq(0,200, by = 50))
-  g
-}
-clone_plot <-  ggplotly(plot_clones(clone))
-clone_plot
-
-
-
-```
-
 ## Look at total amplification
 ### All pools
-
 
 ```{r pool_agg, echo = F, warning = FALSE, message= FALSE}
 
@@ -703,7 +663,6 @@ write.csv(re_pool, "gambia_failedQC_repool.csv", row.names = FALSE)
 
 ```{r filtering, echo = F, warning = F} 
 
-
 data_filt <- allele_data %>% 
   filter(!sampleID %in% re_prep_or_re_seq$sampleID) %>%
   filter(!grepl("Control", sampleID))
@@ -730,21 +689,6 @@ exclude_locus2 <- setdiff(data_filt$locus, data_filt2$locus)
 print(exclude_locus2)
 
 
-
-```
-
-## Moire run
-### Set up moire input
-
-```{r moire_setup, echo=TRUE}
-
-# Use allele_data (sample filtered, but no locus/allele filtered) as moire input
-moire_input <- data_filt %>% 
-  select (sampleID, locus, allele) %>% 
-  rename("sample_id" = "sampleID") %>% 
-  distinct()
-write.csv(moire_input, "gambia_moire_input.csv", row.names = F)
-
 ```
 
 ## Extra
@@ -755,7 +699,7 @@ write.csv(moire_input, "gambia_moire_input.csv", row.names = F)
 
 ggplot(data = allele_table, aes(x = total_alleles)) +
   geom_histogram() +
-  ggtitle("Alleles per locus per sample")
+  ggtitle("UNFILTERED: Alleles per locus per sample")
 
 allele_table2 <- data_filt %>% 
   group_by(locus, sampleID) %>% 
