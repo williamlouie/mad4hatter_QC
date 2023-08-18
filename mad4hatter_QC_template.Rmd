@@ -1,0 +1,660 @@
+---
+title: "MAD4HATTER QC pipeline - Gambia_Indie"
+output: html_document
+date: "2023-08-18"
+---
+
+```{r load_libs, include=FALSE}
+
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(ggplot2)
+library(reshape2)
+library(parallel)
+library(tools)
+library(data.table)
+library(stringr)
+library(plotly)
+library(tidyverse)
+library(ggrepel)
+library(ggbeeswarm)
+library(ggpubr)
+
+
+```
+
+## Details of this dataset
+#### Gambia_Indie-MH, 4 plates prepped between 2023_03 & 2023_04
+
+## Import data
+#### Sample size, loci BEFORE cleanup
+#### Explore data structure
+
+
+```{r import_data, message = FALSE, echo = FALSE, warning=FALSE}
+
+setwd("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/06_23_run")
+
+## Read allele data.txt
+allele_data <- read.delim('allele_data.txt', header = TRUE) %>% 
+  mutate(SampleName = word(sampleID, 9,11, sep = "_")) %>%
+  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
+  mutate(number = word(sampleID, -1, sep = "_"))
+
+# Read sample_coverage.txt
+sample_coverage <- read.table("sample_coverage.txt", sep = "\t", header = T) %>% 
+  rename(sampleID = SampleName) %>%
+  pivot_wider(names_from = X, values_from = NumReads) %>% 
+  mutate(SampleName = word(sampleID, 9,11, sep = "_")) %>%
+  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
+  mutate(number = word(sampleID, -1, sep = "_")) %>%
+  mutate(perc_amplicons = as.numeric(Amplicons)/as.numeric(Input)) 
+
+# Overall info of the data before cleanup
+sample_size <- n_distinct(allele_data$sampleID)
+print(sprintf("Sample size = %s", sample_size))
+locus_no <- n_distinct(allele_data$locus)
+print(sprintf("Loci = %s", locus_no))
+
+# Count number of alleles per locus per sample
+allele_table <- allele_data %>% 
+  group_by(locus) %>% 
+  summarize(total_alleles = n_distinct(allele)) %>% 
+  arrange(-total_alleles)
+# show allele range for each locus per sample
+print(sprintf("%s to %s alleles per locus per sample",
+              min(allele_table$total_alleles), max(allele_table$total_alleles)))
+
+
+```
+
+## Merging data (TBD)
+#### Combine multiple sequencing runs
+#### Combine read coverage with parasite density
+#### Adding plate map
+
+```{r qpcr_run, echo=FALSE, warning = FALSE, message= FALSE}
+
+# QPCR DATA (if available)
+
+# qpcr <- read_excel("~/Documents/Gates_Genomics_Grant/IMMRSE_Paragon_data/Agago/agago_qPCR.xlsx") %>% 
+#   mutate(sampleID = sample)
+# 
+# data <- allele_data %>% 
+#   group_by(sampleID) %>% 
+#   summarize(reads = sum(reads)) %>% 
+#   left_join(qpcr) 
+# 
+# ggplot(data = data) +
+#   geom_point(aes(x = log10(qPCR), y = reads)) +
+#   geom_smooth(aes(x = log10(qPCR), y = reads), method = "loess", se = FALSE) +
+#   ggtitle("Reads vs. Parasitemia")
+
+```
+
+## Track input reads to amplicon
+#### Looks at dimers
+#### grey = input, colored = amplicons
+
+```{r dimer_check, echo=FALSE, warning = FALSE, message= FALSE}
+
+# DIMER CHECK
+
+dimer_check <- sample_coverage[order(sample_coverage$perc_amplicons, decreasing = FALSE),]
+dimer_check <- dimer_check %>%
+  mutate(neg_control = grepl("Neg", sampleID))
+
+# Plot input/amplicon - total reads
+ggplot(dimer_check, aes(x=reorder(number, -Input), y=Input)) + 
+  geom_bar(stat = "identity", fill = "grey") +
+  geom_bar(stat = "identity", data = dimer_check, aes(y = Amplicons, fill = neg_control), alpha = 0.8) +
+  theme_bw() +
+  scale_y_log10() + 
+  ylab("Total reads") + xlab("Sample number") +
+  theme(axis.text = element_text(size = 10), 
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)) +
+  facet_wrap(~prep_date, scales = "free_x") +
+  ggtitle("How many total reads make it to amplicons? (facet by sample prep date)")
+# Plot input/amplicon - percent amplicons
+ggplot(dimer_check) +
+  geom_col(aes(x = reorder(number, -perc_amplicons), y= perc_amplicons, fill = neg_control), alpha = 0.8) + 
+  ylab("Proportion of reads that are amplicons") + xlab("Sample number") + 
+  theme_bw() +
+  theme(axis.text = element_text(size = 10), 
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)) + 
+  scale_y_continuous(limits = c(0,1), expand = c(0, 0)) +
+  facet_wrap(~prep_date, scales = "free_x") +
+  ggtitle("What proportion of reads make it to amplicons? (facet by sample prep date)")
+
+print("Overall % dimers (already multiplied x100)")
+((sum(dimer_check$Input) - sum(dimer_check$`No Dimers`)) / sum(dimer_check$Input))*100
+
+
+```
+
+## Negative controls
+#### Do neg ctrls have a lot of reads?
+#### If so, how will you filter them?
+
+```{r negatives, echo = FALSE, warning = FALSE, message = FALSE}
+
+# Let's look at the negative controls 
+negatives <- allele_data %>% 
+  filter(grepl("Neg", SampleName))
+negatives <- negatives %>% 
+  group_by(SampleName, locus) %>% 
+  # you have to summarize the reads over the locus first 
+  summarize(reads = sum(reads)) %>% 
+  ungroup() 
+
+# Summarize frequency that N reads per locus at a sample show up
+ggplot(data = negatives, aes(x = reads)) + 
+  geom_histogram() +
+  geom_vline(xintercept = 100, linetype='dotted', col = 'red') +
+  xlab("Number of reads at locus") +
+  ggtitle("How many total reads do neg.ctrls have across each locus?")
+# Plot same, faceted by sampleID
+ggplot(data = negatives, aes(x = reads)) + 
+  geom_histogram() +
+  geom_vline(xintercept = 100, linetype='dotted', col = 'red') +
+  xlab("Reads at locus") +
+  facet_wrap(~SampleName) + 
+  ggtitle("How many reads does each neg.ctrl have across each locus?")
+  
+# list negative controls with >100 reads/allele   
+bad_negatives <- negatives %>% 
+  filter(reads > 100) %>% 
+  arrange(reads)
+
+loci_neg <- negatives %>% 
+  group_by(locus) %>% 
+  summarise(reads = sum(reads)) %>%
+  mutate(pool = sapply(strsplit(locus,"-"),tail,1))
+  
+ggplot(loci_neg, aes(y=reads, x=locus)) +
+  geom_bar(position="dodge", stat="identity") +
+  geom_hline(yintercept = 100, linetype='dotted', col = 'red') +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 3)) +
+ # ylim(c(0,100)) +
+  ggtitle("What is the total number of neg.ctrl reads, by pool?") + 
+  facet_wrap(~pool, scales = "free_x")
+
+print("Max number of reads in a locus")
+max(loci_neg$reads)
+
+MadHatter_pools_1B_2_Sheet1 <- read.csv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/MadHatter_pools_1B_2_Sheet1.csv") %>% 
+  rename(locus = `locus_pool`) %>% 
+  select(locus, Gene, "Reason_to_include")
+
+loci_neg <- loci_neg %>% 
+  left_join(MadHatter_pools_1B_2_Sheet1) %>% 
+  filter(reads >= 100) %>%
+  arrange(desc(reads))
+
+print("List of loci with >100 reads (summed over all negative controls)")
+loci_neg
+# Most of the reads in the neg.ctrls are from pool 2
+
+
+```
+
+## Positive controls
+#### Using a known parasite strain at a known density
+#### Alleles should be known, and monoclonal
+
+```{r pos_ctrls, echo = FALSE, warning = F, message = F}
+
+# Let's look at the positive controls 
+positives <- allele_data %>% 
+  filter(grepl("Pos", sampleID))
+positives <- positives %>% 
+  group_by(sampleID, locus) %>% 
+  # you have to summarize the reads over the locus first 
+  summarize(reads = sum(reads)) %>% 
+  ungroup() 
+
+## Look at clonality
+pos_clone <- allele_data %>% 
+  filter(grepl("Pos", sampleID)) %>% 
+  distinct(sampleID, locus, asv, .keep_all = TRUE) %>%
+  group_by(sampleID, locus) %>% 
+  summarise(total_alleles = n()) %>%
+  mutate(Clone = ifelse(total_alleles == 1, "Mono", "Poly"))
+pos_clone <- pos_clone %>% 
+  group_by(sampleID) %>% 
+  count(Clone) %>%
+  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
+  mutate(number = word(sampleID, -1, sep = "_"))
+pos_clone_wide <- tidyr::spread(pos_clone, Clone, n)
+pos_clone_wide[is.na(pos_clone_wide)] <- 0
+pos_clone_wide %<>% mutate(Total_alleles = Mono + Poly) %>% 
+  mutate(Mono_prop = Mono/Total_alleles) %>% 
+  mutate(Poly_prop = Poly/Total_alleles)
+print(sprintf("Mean of total locus = %s, Mean prop. of monoclonal loci = %s, Mean prop. of polyclonal loci = %s",
+              round(mean(pos_clone_wide$Total_alleles),2), 
+              round(mean(pos_clone_wide$Mono_prop),2), 
+              round(mean(pos_clone_wide$Poly_prop),2)))
+plot_pos_clones <- function(pos_clone){
+  g_pos <- pos_clone %>%
+  ggplot(aes(x= sampleID, y= n)) +
+  geom_col(aes(fill = Clone)) +
+  theme(axis.text.y = element_text(size = 8), axis.text.x = element_blank()) +
+  scale_y_continuous(name = "Locus No.", breaks = seq(0,200, by = 50)) +
+  facet_wrap(~prep_date, scales = "free_x")
+  g_pos
+}
+pos_clone_plot <-  ggplotly(plot_pos_clones(pos_clone))
+pos_clone_plot
+
+
+```
+
+## Look at total amplification
+### All pools combined
+
+```{r pool_agg, echo = F, warning = FALSE, message= FALSE}
+
+v4_amplicon_info <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/06_23_run/v4_amplicon_info.tsv", trim_ws = TRUE) %>% 
+  rename(locus = amplicon) %>% 
+   mutate(pool = gsub("(.*)-(.*)", "\\2", locus))
+
+table(v4_amplicon_info$pool)
+
+# What loci are not amplifying in ALL primer pools? 
+loci_all = allele_data %>% 
+  mutate(n = 1) %>% 
+  group_by(locus) %>% 
+  summarize(n = sum(n)) %>% 
+  ungroup() %>% 
+  mutate(pool = sapply(strsplit(locus,"-"),tail,1))
+
+# of loci without any reads in all samples
+loci_all_abs <- loci_all  %>% filter(is.na(n))
+# subtract loci with no reads from the number used for normalization 
+locus_no_corr <- n_distinct(loci_all) - n_distinct(loci_all_abs)
+
+# group by sample + pool 
+locus_cov_100 = allele_data %>% 
+  group_by(SampleName, locus) %>% 
+  # you have to summarize the reads over the locus first 
+  summarize(reads = sum(reads)) %>% 
+  ungroup() %>% 
+  mutate(pool = sapply(strsplit(locus,"-"),tail,1)) %>%
+  # then group by sample
+  group_by(SampleName) %>% 
+  summarize(totreads = sum(reads), n50 = sum(reads>50), n100 = sum(reads>100)) 
+
+# Merge with qpcr
+# locus_cov_100 <- locus_cov_100 %>% 
+#  left_join(qpcr) 
+
+# normalize reads using 100 reads per amplicon as the criteria
+amp_cov_pool_100_norm <- locus_cov_100 %>% 
+ # group_by(sampleID) %>% 
+ # summarize(n100 = sum(n100), totreads = sum(totreads)) %>% 
+  mutate(neg_control = grepl("Neg", SampleName)) %>% 
+  mutate(norm = n100/locus_no_corr)
+
+# Plot
+ggplot(amp_cov_pool_100_norm, aes(x=totreads, y = norm, color = neg_control, label=SampleName))+
+  geom_point()+
+  scale_x_log10() + 
+  xlab("Total number of reads") +
+  ylab("Proportion of loci with >100 reads") +
+  ggtitle("For each sample, what is the proportion of loci with >100 reads?") + 
+  geom_label_repel() + 
+  ylim(0,1)
+
+
+```
+
+## Species check
+#### Should be Pfal, and not other species
+#### These loci will be filtered out downstream (loci 1AB)
+
+```{r species_check, echo = F, warning = FALSE, message= FALSE}
+
+pool_1A <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool1A-Diversity.tsv", trim_ws = TRUE)
+v4_amplicon_info_1AB <- v4_amplicon_info %>% select(locus, pool) %>%
+  filter(pool == "1A" | pool == "1AB")
+
+species_loci <- subset(pool_1A, Category == "Species")
+nonpfal <- species_loci$`locus-pool`
+
+species_check <- allele_data %>%
+  group_by(sampleID, locus) %>%
+  filter(locus %in% nonpfal)
+
+# Plot for all samples
+ggplot(species_check, aes(x=sampleID, y = reads, label = number))+
+  geom_point() +
+  scale_y_log10() + 
+  xlab("Sample No.") +
+  ylab("Reads") +
+  facet_wrap(~locus) +
+  ggtitle("Are there any non-Pfal reads?") + 
+  geom_label_repel()
+
+# Do your controls have these reads?
+species_check_ctrl <- species_check %>% 
+  filter(grepl("Control", sampleID))
+ggplot(species_check_ctrl, aes(x=sampleID, y = reads, label = SampleName))+
+  geom_point() +
+  scale_y_log10() + 
+  xlab("Sample No.") +
+  ylab("Reads") +
+  facet_wrap(~locus) +
+  theme(axis.text.x = element_blank()) +
+  ggtitle("Are there any non-Pfal reads in the controls?") + 
+  geom_label_repel()
+
+
+```
+
+## Look at how each individual pool amplified
+### Pool 1A 
+
+```{r pool1A, echo = F, warning = FALSE, message= FALSE}
+
+pool_1A <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool1A-Diversity.tsv", trim_ws = TRUE)
+v4_amplicon_info_1A <- v4_amplicon_info %>% select(locus, pool) %>%
+  filter(pool == "1A")
+
+# What loci are not amplifying in 1A or 1AB primer pool? 
+loci_1A = allele_data %>% 
+  mutate(n = 1) %>% 
+  group_by(locus) %>% 
+  summarize(n = sum(n)) %>% 
+  ungroup() %>% 
+  mutate(pool = sapply(strsplit(locus,"-"),tail,1)) %>% 
+  filter(pool == "1A") %>%
+  filter(!locus %in% nonpfal)
+
+# of loci with reads
+v4_amplicon_info_1A <- v4_amplicon_info_1A %>% left_join(loci_1A)
+# of loci without any reads in all samples
+v4_amplicon_info_1A <- v4_amplicon_info_1A  %>% filter(is.na(n))
+# subtract loci with no reads from the number used for normalization 
+max1A <- n_distinct(loci_1A) - n_distinct(v4_amplicon_info_1A) - length(nonpfal)
+
+# group by sample + pool 
+locus_cov_100 = allele_data %>% 
+  group_by(sampleID, locus) %>% 
+  # you have to summarize the reads over the locus first 
+  summarize(reads = sum(reads)) %>% 
+  ungroup() %>% 
+  mutate(pool = sapply(strsplit(locus,"-"),tail,1)) %>% 
+  mutate(pool = ifelse(pool == "1AB", "1A", pool)) %>% 
+  # then group by sample/pool
+  group_by(sampleID, pool) %>% 
+  summarize(totreads = sum(reads), n50 = sum(reads>50), n100 = sum(reads>100)) 
+
+# Merge with qpcr
+# locus_cov_100 <- locus_cov_100 %>% 
+#  left_join(qpcr) 
+
+# pool 1A, normalize reads using 100 reads per amplicon as the criteria
+amp_cov_pool_100_norm_1A <- locus_cov_100 %>% 
+  filter(pool == "1A") %>% 
+ # group_by(sampleID) %>% 
+ # summarize(n100 = sum(n100), totreads = sum(totreads)) %>% 
+  mutate(neg_control = grepl("Neg", sampleID)) %>% 
+  mutate(norm = n100/max1A)
+
+# Plot
+ggplot(amp_cov_pool_100_norm_1A, aes(x=totreads, y = norm, color = neg_control, label=sampleID))+
+  geom_point()+
+  scale_x_log10() + 
+  xlab("Total number of reads") +
+  ylab("Proportion of pool-1A loci with >100 reads") +
+  ggtitle("For each sample, what is the proportion of Pool 1A loci with >100 reads?") + 
+  geom_label_repel() + 
+  ylim(0,1)
+
+
+bad_1A <- amp_cov_pool_100_norm_1A %>% filter(norm < 0.75) %>% filter(neg_control == FALSE)
+bad_1A_reprep <- amp_cov_pool_100_norm_1A %>% filter(norm < 0.50) %>% filter(neg_control == FALSE) %>% mutate(reprep =1, repool = 0)
+bad_1A_repool <- amp_cov_pool_100_norm_1A %>% filter(norm > 0.50 & norm <0.75) %>% filter(neg_control == FALSE) %>% mutate(reprep = 0, repool = 1)
+
+print("No reads in any samples for these loci, for 1A")
+print(v4_amplicon_info_1A)
+
+print("List of samples that do not have >75% loci with >100 reads, in pool 1A")
+bad_1A
+
+
+```
+
+### Pool 5 
+
+```{r pool5, echo = F, warning = F, message = F}
+
+pool_5 <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool1B-Resitance+.tsv", trim_ws = TRUE) %>%
+  filter(pool5 == TRUE)
+
+table(pool_5$pool5)
+pool_5_names <- pool_5$`locus-pool`
+
+# What loci are not amplifying in primer pool 5?
+loci_5 = allele_data %>%
+  mutate(pool = sapply(strsplit(locus,"-"),tail,1)) %>%
+  filter(pool == "1B" | pool == "1B2") %>%
+  mutate(n = 1) %>%
+  group_by(locus) %>%
+  summarize(n = sum(n)) %>%
+  ungroup() 
+
+pool_5 <- pool_5 %>% 
+  left_join(loci_5, by=c("locus-pool" = "locus")) %>%
+  filter(!`locus-pool` %in% nonpfal)
+
+pool_5_fail <- pool_5 %>% 
+  filter(is.na(n))
+
+n1B <- n_distinct(pool_5)
+
+# pool 5, normalize reads
+amp_cov_pool_100_norm_5 <- locus_cov_100 %>% 
+  filter(pool == "1B" | pool == "1B2") %>% 
+  mutate(neg_control = grepl("Neg", sampleID)) %>% 
+  group_by(sampleID, neg_control) %>% 
+  summarize(totreads = sum(totreads), n50 = sum(n50), n100 = sum(n100), norm = sum(n100)/sum(n1B)) %>% 
+    mutate(pool = "1B") %>% 
+    select(sampleID, pool, totreads, n50, n100, neg_control, norm)
+
+# Plot
+ggplot(amp_cov_pool_100_norm_5, aes(x=totreads, y = norm, color = neg_control, label=sampleID))+
+  geom_point()+
+  scale_x_log10() +
+  ggtitle("For each sample, what is the proportion of Pool 5 loci with >100 reads?") +
+  geom_label_repel() +
+  ylim(0,1)
+
+# List of "bad" QC samples
+bad_5 <- amp_cov_pool_100_norm_5 %>% 
+  filter(norm < 0.75) %>% 
+  filter(neg_control == FALSE) %>% 
+  mutate(pool = "1B", .after = sampleID)
+bad_5_reprep <- amp_cov_pool_100_norm_5 %>% 
+  filter(norm < 0.50) %>% 
+  filter(neg_control == FALSE) %>% 
+  mutate(reprep =1, repool = 0) %>% 
+  mutate(pool = "1B", .after = sampleID)
+bad_5_repool <- amp_cov_pool_100_norm_5 %>% 
+  filter(norm > 0.50 & norm <0.75) %>% 
+  filter(neg_control == FALSE) %>% 
+  mutate(reprep = 0, repool = 1) %>% 
+  mutate(pool = "1B", .after = sampleID)
+
+print("Loci without any reads, pool 5")
+pool_5_fail
+
+print("List of samples that do not have >75% alleles with >100 reads, pool 5")
+bad_5
+
+
+```
+
+### Pool 2 
+
+```{r pool2, echo = F, warning = FALSE}
+
+pool_2 <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool2-Resistance+.tsv", trim_ws = TRUE)
+# pool 2,  normalize reads
+# n is sample size?
+amp_cov_pool_100_norm_2 <- locus_cov_100 %>%
+  filter(pool == "2") %>%
+  mutate(n = 31, norm = n100/n)
+
+# what loci are not amplifying in 1AB primer pool? 
+# 1B2 was accounted for earlier 
+
+# loci_2 = run16 %>% 
+#   mutate(n = 1) %>% 
+#   group_by(locus) %>% 
+#   summarize(n = sum(n)) %>% 
+#   ungroup() %>% 
+#   mutate(pool = sapply(strsplit(locus,"-"),tail,1)) %>% 
+#   filter(pool == "2")
+# 
+# v4_amplicon_info_2 <- v4_amplicon_info %>% select(locus, pool) %>%
+#   filter(pool == "2") 
+# 
+# v4_amplicon_info_2 <- v4_amplicon_info_2 %>% left_join(loci_2)
+# #only things missing are some long amplicons & 1 HRP3 allele
+# 
+# v4_amplicon_info_2_missing <- v4_amplicon_info_2 %>% filter(is.na(n))
+# 
+# 
+# n_pool2 <- v4_amplicon_info_2 %>% filter(!is.na(n))
+# 
+# #2 of the amplicons (one long amplicon, one HRP3) amplified in only a few samples
+# n_pool2 <- n_distinct(n_pool2) - 2
+# 
+# amp_cov_pool_100_norm_2 <- locus_cov_100 %>%
+#   filter(pool == "2") %>%
+#   mutate(neg=grepl("Neg",sampleID)) %>% 
+#   mutate(norm = n100/n_pool2)
+# 
+# #plot
+# ggplot(amp_cov_pool_100_norm_2, aes(x=totreads, y = norm, color = neg,label=sampleID))+
+#   geom_point()+
+#   scale_x_log10() +
+#   ggtitle("Pool 2 normalized reads") +
+#   geom_label_repel() +
+#   ylim(0,1)
+# 
+# 
+# print("Loci without any reads in pool 2")
+# v4_amplicon_info_2_missing
+# 
+# #list of "bad" QC samples
+# bad_2 <- amp_cov_pool_100_norm_2 %>% filter(norm < 0.75)
+# bad_2_reprep <- amp_cov_pool_100_norm_2 %>% filter(norm < 0.50) %>% filter(neg == FALSE) %>% mutate(reprep =1, repool = 0)
+# bad_2_repool <- amp_cov_pool_100_norm_2 %>% filter(norm > 0.50 & norm <0.75) %>% filter(neg == FALSE) %>% mutate(reprep = 0, repool = 1)
+# 
+# 
+# print("List of samples that do not have >75% alleles with >100 reads, pool 2")
+# bad_2
+
+
+```
+
+## Create list of samples that fail any of the QC checks by pool 
+#### Reprep if <50% amplicons with >100 reads
+#### Repool if >50% but <75% amplicons with >100 reads
+
+```{r reruns, echo = F, warning = F} 
+
+bind_tog <- bind_rows(bad_1A, bad_5) %>% 
+  filter(!grepl("Neg", sampleID)) %>% 
+  filter(!grepl("Pos", sampleID))
+table(bind_tog$sampleID)
+
+# samples that need to be re-prepped
+re_prep_or_re_seq <- bind_rows(bad_1A_reprep, bad_1A_repool, bad_5_reprep, bad_5_repool)
+re_prep_or_re_seq <- re_prep_or_re_seq %>% 
+  filter(!grepl("Neg", sampleID)) %>% 
+  filter(!grepl("control", sampleID)) %>% 
+  filter(!grepl("Control", sampleID))
+
+wider <- re_prep_or_re_seq %>% 
+  select(sampleID, pool, reprep, repool) %>%
+  pivot_wider(id_cols = sampleID, names_from = pool, values_from = c(reprep, repool))
+# replace NAs (which mean that the samples had enough reads in that pool) with 0s
+wider[is.na(wider)] <- 0
+# now you need to deal with collapsing by sample -- if any need to be reprepped, then all need to be reprepped
+re_prep <- wider %>% 
+  filter(reprep_1A == 1 | reprep_1B == 1) %>%
+  select(sampleID) %>% 
+  mutate(reprep = 1, repool = 0)
+re_pool <- wider %>% 
+  anti_join(re_prep) %>% 
+  select(sampleID) %>% 
+  mutate(reprep = 0, repool = 1)
+
+write.csv(re_prep, "gambia_failedQC_reprep.csv", row.names = FALSE)
+write.csv(re_pool, "gambia_failedQC_repool.csv", row.names = FALSE)
+
+```
+
+## Filtering
+#### Remove bad samples
+#### Remove bad loci
+#### Remove controls
+
+```{r filtering, echo = F, warning = F} 
+
+data_filt <- allele_data %>% 
+  filter(!sampleID %in% re_prep_or_re_seq$sampleID) %>%
+  filter(!grepl("Control", sampleID))
+
+sample_size_filt <- n_distinct(data_filt$sampleID)
+print(sprintf("Sample size= %s", sample_size_filt))
+
+data_filt2 <- data_filt %>%
+  distinct(sampleID, locus, asv, allele, .keep_all = TRUE) %>%
+  group_by(sampleID, locus) %>%
+  mutate(norm.reads.locus = reads/sum(reads))%>%
+  mutate(n.alleles = n())
+# Filter out alleles with <1% prevalence
+data_filt2 <- data_filt2 %>% filter(norm.reads.locus > 0.01)
+data_filt2_excluded <- data_filt2 %>% filter(norm.reads.locus < 0.01) 
+# Exclude ratio
+print(sprintf("# of entries excluded = %s, Prop. excluded = %s", nrow(data_filt2_excluded), nrow(data_filt2_excluded)/nrow(data_filt2)))
+# No. of loci left after cleanup
+locus_no2 <- n_distinct(data_filt2$locus)
+print(sprintf("# of loci after cleanup = %s", locus_no2))
+# Loci excluded due to <1% fraction in overall samples
+locus_no2 <- n_distinct(data_filt2$locus)
+exclude_locus2 <- setdiff(data_filt$locus, data_filt2$locus)
+print(exclude_locus2)
+
+
+```
+
+## Extra
+### rough MOI estimates (No. alleles per locus/ sample)
+
+```{r extra, echo = FALSE, warning = FALSE}
+
+
+ggplot(data = allele_table, aes(x = total_alleles)) +
+  geom_histogram() +
+  ggtitle("UNFILTERED: Alleles per locus per sample")
+
+allele_table2 <- data_filt %>% 
+  group_by(locus, sampleID) %>% 
+  summarize(total_alleles = n_distinct(allele)) %>% 
+  arrange(-total_alleles)
+
+ggplot(data = allele_table2, aes(x = total_alleles)) +
+  geom_histogram() +
+  ggtitle("FILTERED: Alleles per locus per sample")
+  
+
+```
+
+
+
