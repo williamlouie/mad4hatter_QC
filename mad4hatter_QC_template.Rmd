@@ -66,6 +66,14 @@ allele_table <- allele_data %>%
 print(sprintf("%s to %s alleles per locus per sample",
               min(allele_table$total_alleles), max(allele_table$total_alleles)))
 
+# Import pool1A info
+pool_1A <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool1A-Diversity.tsv", trim_ws = TRUE)
+
+# Import pool5 info
+pool_1B <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool1B-Resitance+.tsv", trim_ws = TRUE)
+
+# Import pool2 info
+pool_2 <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool2-Resistance+.tsv", trim_ws = TRUE)
 
 ```
 
@@ -134,8 +142,8 @@ print("Overall % dimers (already multiplied x100)")
 ```
 
 ## Negative controls
-#### Do neg ctrls have a lot of reads?
-#### If so, how will you filter them?
+#### Check that the number of reads is low
+#### Check if the reads found correspond to the pools you amplified (1A and 5)
 
 ```{r negatives, echo = FALSE, warning = FALSE, message = FALSE}
 
@@ -180,21 +188,18 @@ ggplot(loci_neg, aes(y=reads, x=locus)) +
   ggtitle("What is the total number of neg.ctrl reads, by pool?") + 
   facet_wrap(~pool, scales = "free_x")
 
-print("Max number of reads in a locus")
-max(loci_neg$reads)
+pool_1B_neg <- pool_1B %>% rename(locus = `locus-pool`) %>% 
+  select(locus, Gene, "Reason to include (if drug resistance: aminoacids)")
+pool_2_neg <- pool_2 %>% rename(locus = `locus-pool`) %>% 
+  select(locus, Gene, "Reason to include (if drug resistance: aminoacids)")
+pool_1B_2_neg <- rbind(pool_1B_neg, pool_2_neg)
 
-MadHatter_pools_1B_2_Sheet1 <- read.csv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/MadHatter_pools_1B_2_Sheet1.csv") %>% 
-  rename(locus = `locus_pool`) %>% 
-  select(locus, Gene, "Reason_to_include")
-
-loci_neg <- loci_neg %>% 
-  left_join(MadHatter_pools_1B_2_Sheet1) %>% 
+loci_neg_info <- loci_neg %>% 
+  left_join(pool_1B_2_neg) %>% 
   filter(reads >= 100) %>%
   arrange(desc(reads))
-
-print("List of loci with >100 reads (summed over all negative controls)")
-loci_neg
-# Most of the reads in the neg.ctrls are from pool 2
+print("List of pool 1B/2 loci with >100 reads (summed over all negative controls)")
+loci_neg_info
 
 
 ```
@@ -247,6 +252,11 @@ plot_pos_clones <- function(pos_clone){
 pos_clone_plot <-  ggplotly(plot_pos_clones(pos_clone))
 pos_clone_plot
 
+positives_na_loci <- pool_1A %>%
+  filter(!`locus-pool` %in% positives$locus)
+
+print("Pool1A loci that are abset in positive controls:")
+positives_na_loci$`locus-pool`
 
 ```
 
@@ -298,7 +308,7 @@ amp_cov_pool_100_norm <- locus_cov_100 %>%
 
 # Plot
 ggplot(amp_cov_pool_100_norm, aes(x=totreads, y = norm, color = neg_control, label=SampleName))+
-  geom_point()+
+  geom_point() +
   scale_x_log10() + 
   xlab("Total number of reads") +
   ylab("Proportion of loci with >100 reads") +
@@ -310,12 +320,12 @@ ggplot(amp_cov_pool_100_norm, aes(x=totreads, y = norm, color = neg_control, lab
 ```
 
 ## Species check
-#### Should be Pfal, and not other species
+#### Controls should be Pfal, and not other species
+#### NonPfal detection in samples suggests mixed infection
 #### These loci will be filtered out downstream (loci 1AB)
 
 ```{r species_check, echo = F, warning = FALSE, message= FALSE}
 
-pool_1A <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool1A-Diversity.tsv", trim_ws = TRUE)
 v4_amplicon_info_1AB <- v4_amplicon_info %>% select(locus, pool) %>%
   filter(pool == "1A" | pool == "1AB")
 
@@ -357,7 +367,6 @@ ggplot(species_check_ctrl, aes(x=sampleID, y = reads, label = SampleName))+
 
 ```{r pool1A, echo = F, warning = FALSE, message= FALSE}
 
-pool_1A <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool1A-Diversity.tsv", trim_ws = TRUE)
 v4_amplicon_info_1A <- v4_amplicon_info %>% select(locus, pool) %>%
   filter(pool == "1A")
 
@@ -407,7 +416,7 @@ ggplot(amp_cov_pool_100_norm_1A, aes(x=totreads, y = norm, color = neg_control, 
   geom_point()+
   scale_x_log10() + 
   xlab("Total number of reads") +
-  ylab("Proportion of pool-1A loci with >100 reads") +
+  ylab("Proportion of pool 1A loci with >100 reads") +
   ggtitle("For each sample, what is the proportion of Pool 1A loci with >100 reads?") + 
   geom_label_repel() + 
   ylim(0,1)
@@ -430,7 +439,8 @@ bad_1A
 
 ```{r pool5, echo = F, warning = F, message = F}
 
-pool_5 <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool1B-Resitance+.tsv", trim_ws = TRUE) %>%
+# Import pool5 info
+pool_5 <- pool_1B %>%
   filter(pool5 == TRUE)
 
 table(pool_5$pool5)
@@ -467,7 +477,7 @@ amp_cov_pool_100_norm_5 <- locus_cov_100 %>%
 ggplot(amp_cov_pool_100_norm_5, aes(x=totreads, y = norm, color = neg_control, label=sampleID))+
   geom_point()+
   scale_x_log10() +
-  ggtitle("For each sample, what is the proportion of Pool 5 loci with >100 reads?") +
+  ggtitle("For each sample, what is the proportion of pool 5 loci with >100 reads?") +
   geom_label_repel() +
   ylim(0,1)
 
@@ -500,15 +510,11 @@ bad_5
 
 ```{r pool2, echo = F, warning = FALSE}
 
-pool_2 <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/madhatter_pool_info/Pool2-Resistance+.tsv", trim_ws = TRUE)
 # pool 2,  normalize reads
 # n is sample size?
-amp_cov_pool_100_norm_2 <- locus_cov_100 %>%
-  filter(pool == "2") %>%
-  mutate(n = 31, norm = n100/n)
-
-# what loci are not amplifying in 1AB primer pool? 
-# 1B2 was accounted for earlier 
+# amp_cov_pool_100_norm_2 <- locus_cov_100 %>%
+#   filter(pool == "2") %>%
+#   mutate(n = sample_size, norm = n100/n)
 
 # loci_2 = run16 %>% 
 #   mutate(n = 1) %>% 
@@ -570,7 +576,7 @@ amp_cov_pool_100_norm_2 <- locus_cov_100 %>%
 bind_tog <- bind_rows(bad_1A, bad_5) %>% 
   filter(!grepl("Neg", sampleID)) %>% 
   filter(!grepl("Pos", sampleID))
-table(bind_tog$sampleID)
+# table(bind_tog$sampleID)
 
 # samples that need to be re-prepped
 re_prep_or_re_seq <- bind_rows(bad_1A_reprep, bad_1A_repool, bad_5_reprep, bad_5_repool)
@@ -594,8 +600,8 @@ re_pool <- wider %>%
   select(sampleID) %>% 
   mutate(reprep = 0, repool = 1)
 
-write.csv(re_prep, "gambia_failedQC_reprep.csv", row.names = FALSE)
-write.csv(re_pool, "gambia_failedQC_repool.csv", row.names = FALSE)
+write.csv(re_prep, "/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/06_23_run/gambia_failedQC_reprep.csv", row.names = FALSE)
+write.csv(re_pool, "/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/06_23_run/gambia_failedQC_repool.csv", row.names = FALSE)
 
 ```
 
@@ -622,10 +628,10 @@ data_filt2 <- data_filt %>%
 data_filt2 <- data_filt2 %>% filter(norm.reads.locus > 0.01)
 data_filt2_excluded <- data_filt2 %>% filter(norm.reads.locus < 0.01) 
 # Exclude ratio
-print(sprintf("# of entries excluded = %s, Prop. excluded = %s", nrow(data_filt2_excluded), nrow(data_filt2_excluded)/nrow(data_filt2)))
+print(sprintf("Number of entries excluded = %s, Proportion excluded = %s", nrow(data_filt2_excluded), nrow(data_filt2_excluded)/nrow(data_filt2)))
 # No. of loci left after cleanup
 locus_no2 <- n_distinct(data_filt2$locus)
-print(sprintf("# of loci after cleanup = %s", locus_no2))
+print(sprintf("Number of loci after cleanup = %s", locus_no2))
 # Loci excluded due to <1% fraction in overall samples
 locus_no2 <- n_distinct(data_filt2$locus)
 exclude_locus2 <- setdiff(data_filt$locus, data_filt2$locus)
@@ -635,7 +641,7 @@ print(exclude_locus2)
 ```
 
 ## Extra
-### rough MOI estimates (No. alleles per locus/ sample)
+### rough MOI estimates (No. alleles per locus/ sample) (NOT moire)
 
 ```{r extra, echo = FALSE, warning = FALSE}
 
@@ -655,6 +661,4 @@ ggplot(data = allele_table2, aes(x = total_alleles)) +
   
 
 ```
-
-
 
