@@ -255,7 +255,7 @@ pos_clone_plot
 positives_na_loci <- pool_1A %>%
   filter(!`locus-pool` %in% positives$locus)
 
-print("Pool1A loci that are abset in positive controls:")
+print("Pool 1A loci that are abset in positive controls:")
 positives_na_loci$`locus-pool`
 
 ```
@@ -567,6 +567,45 @@ bad_5
 
 ```
 
+## Contamination sleuthing
+#### Investigate shared alleles/ASVs between controls and samples
+#### Identify potential sample cross-contamination (TBD)
+#### Quantify level of contamination
+
+```{r contamination, echo = F, warning = F} 
+
+# Pull ASVs with >= 10 reads in neg.ctrls
+neg_asv <- allele_data %>% 
+  filter(grepl("Neg", SampleName)) %>% 
+  select(SampleName, asv, allele, reads) %>% 
+  filter(reads >= 10) %>%
+  pull(asv)
+# T/F shared ASVs between neg.ctrl and samples
+sample_asv <- allele_data %>% 
+  filter(!grepl("Control", sampleID)) %>% 
+  select(sampleID, locus, asv, allele, reads) %>%
+  mutate(shared = grepl(neg_asv, asv))
+sample_asv2 <- sample_asv %>%
+  distinct(sampleID, locus, asv, shared, .keep_all = TRUE) %>%
+  group_by(sampleID, locus, shared) %>%
+  summarise(total_reads = sum(reads), div = n_distinct(asv)) %>%
+  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
+  arrange(shared)
+
+color_fill <- c("FALSE" = "gray", "TRUE" = "red")
+
+ggplot(data = sample_asv2, aes(x = div, y = total_reads, color = shared)) +
+  geom_point(position = "jitter", size = 0.5) +
+  scale_color_manual(values = color_fill, name = "ASV also in neg.ctrl") +
+  scale_y_log10() +
+  ylab("Total reads in locus/sample") +
+  xlab("Number of distinct ASVs in a locus/sample") +
+  ggtitle("Do higher read counts/diversity correspond with neg.ctrl contamination?") +
+  facet_wrap(~prep_date, scales = "free")
+
+
+```
+
 ## Create list of samples that fail any of the QC checks by pool 
 #### Reprep if <50% amplicons with >100 reads
 #### Repool if >50% but <75% amplicons with >100 reads
@@ -604,7 +643,6 @@ write.csv(re_prep, "/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.loc
 write.csv(re_pool, "/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/06_23_run/gambia_failedQC_repool.csv", row.names = FALSE)
 
 ```
-
 ## Filtering
 #### Remove bad samples
 #### Remove bad loci
@@ -641,10 +679,10 @@ print(exclude_locus2)
 ```
 
 ## Extra
-### rough MOI estimates (No. alleles per locus/ sample) (NOT moire)
+### rough MOI estimates 
+##### Number of alleles per locus/sample (NOT moire)
 
 ```{r extra, echo = FALSE, warning = FALSE}
-
 
 ggplot(data = allele_table, aes(x = total_alleles)) +
   geom_histogram() +
