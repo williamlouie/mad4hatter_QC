@@ -1,7 +1,11 @@
 ---
 title: "MAD4HATTER QC pipeline - Gambia_Indie"
-output: html_document
-date: "2023-08-18"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+date: "2023-09-11"
 ---
 
 ```{r load_libs, include=FALSE}
@@ -24,7 +28,7 @@ library(ggpubr)
 
 ```
 
-## Details of this dataset
+# Details of this dataset
 #### Gambia_Indie-MH, 4 plates prepped between 2023_03 & 2023_04
 
 ## Import data
@@ -40,7 +44,8 @@ setwd("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads
 allele_data <- read.delim('allele_data.txt', header = TRUE) %>% 
   mutate(SampleName = word(sampleID, 9,11, sep = "_")) %>%
   mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
-  mutate(number = word(sampleID, -1, sep = "_"))
+  mutate(number = word(sampleID, -1, sep = "_")) %>% 
+  mutate(Barcode = substr(SampleName, 1, 10))
 
 # Read sample_coverage.txt
 sample_coverage <- read.table("sample_coverage.txt", sep = "\t", header = T) %>% 
@@ -50,6 +55,9 @@ sample_coverage <- read.table("sample_coverage.txt", sep = "\t", header = T) %>%
   mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
   mutate(number = word(sampleID, -1, sep = "_")) %>%
   mutate(perc_amplicons = as.numeric(Amplicons)/as.numeric(Input)) 
+
+# Read amplicon_coverage.txt
+amplicon_coverage <- read.table("amplicon_coverage.txt", sep = "\t", header = T)
 
 # Overall info of the data before cleanup
 sample_size <- n_distinct(allele_data$sampleID)
@@ -77,32 +85,239 @@ pool_2 <- read_tsv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.loc
 
 ```
 
-## Merging data (TBD)
+## Merging data
 #### Combine multiple sequencing runs
-#### Combine read coverage with parasite density
-#### Adding plate map
+#### Combine with parasite density
+#### Combine with plate map
 
-```{r qpcr_run, echo=FALSE, warning = FALSE, message= FALSE}
+```{r merge_info, echo = F, warning = T, message = F}
 
-# QPCR DATA (if available)
+sheet1 <- read_csv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/Gambia_Indie-1B_Plate1_Samplesheet.csv")
+colnames(sheet1)[colnames(sheet1) == "Micronix #"] ="Barcode"
+sheet1$plate <- "Plate1"
+controls1 <- sheet1 %>% filter(grepl("Control", Barcode))
 
-# qpcr <- read_excel("~/Documents/Gates_Genomics_Grant/IMMRSE_Paragon_data/Agago/agago_qPCR.xlsx") %>% 
-#   mutate(sampleID = sample)
-# 
-# data <- allele_data %>% 
-#   group_by(sampleID) %>% 
-#   summarize(reads = sum(reads)) %>% 
-#   left_join(qpcr) 
-# 
-# ggplot(data = data) +
-#   geom_point(aes(x = log10(qPCR), y = reads)) +
-#   geom_smooth(aes(x = log10(qPCR), y = reads), method = "loess", se = FALSE) +
-#   ggtitle("Reads vs. Parasitemia")
+sheet2 <- read_csv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/Gambia_Indie-1B_Plate2_Samplesheet.csv")
+colnames(sheet2)[colnames(sheet2) == "Micronix #"] ="Barcode"
+sheet2$plate <- "Plate2"
+controls2 <- sheet2 %>% filter(grepl("Control", Barcode))
+
+sheet3 <- read_csv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/Gambia_Indie-1B_Plate3_Samplesheet.csv")
+colnames(sheet3)[colnames(sheet3) == "Micronix #"] ="Barcode"
+sheet3$plate <- "Plate3"
+controls3 <- sheet3 %>% filter(grepl("Control", Barcode))
+
+sheet4 <- read_csv("/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/Gambia_Indie-1B_Plate4_Samplesheet.csv")
+colnames(sheet4)[colnames(sheet4) == "Micronix #"] ="Barcode"
+sheet4$plate <- "Plate4"
+controls4 <- sheet4 %>% filter(grepl("Control", Barcode))
+
+# Join with sample sheets, by barcode, and note plate
+allele_data_position1 <- allele_data %>%
+  left_join(sheet1, by = "Barcode") %>%
+  filter(!is.na(plate))
+# Extract row/col from position
+allele_data_position1 <- allele_data_position1 %>%
+  mutate(col = str_extract(Postion, "\\d+")) %>%
+  mutate(row = str_extract(Postion, "[A-Z]+"))
+
+allele_data_position2 <- allele_data %>%
+  left_join(sheet2, by = "Barcode") %>%
+  filter(!is.na(plate))
+allele_data_position2 <- allele_data_position2 %>%
+  mutate(col = str_extract(Postion, "\\d+")) %>%
+  mutate(row = str_extract(Postion, "[A-Z]+"))
+
+allele_data_position3 <- allele_data %>%
+  left_join(sheet3, by = "Barcode") %>%
+  filter(!is.na(plate))
+allele_data_position3 <- allele_data_position3 %>%
+  mutate(col = str_extract(Postion, "\\d+")) %>%
+  mutate(row = str_extract(Postion, "[A-Z]+"))
+
+allele_data_position4 <- allele_data %>%
+  left_join(sheet4, by = "Barcode") %>%
+  filter(!is.na(plate))
+allele_data_position4 <- allele_data_position4 %>%
+  mutate(col = str_extract(Postion, "\\d+")) %>%
+  mutate(row = str_extract(Postion, "[A-Z]+"))
+
+# Do the same for controls
+controls <- allele_data %>%
+  filter(grepl("Control", sampleID)) %>%
+  group_by(SampleName, prep_date) %>%
+  summarise(reads_per_locus = mean(reads)) %>%
+  rename(plate = prep_date) %>%
+  mutate(Barcode = word(SampleName, 1, sep = "_"))
+controls$plate[controls$plate == '2023_03_06'] <- 'Plate1'
+controls$plate[controls$plate == '2023_03_28'] <- 'Plate2'
+controls$plate[controls$plate == '2023_03_30'] <- 'Plate3'
+controls$plate[controls$plate == '2023_04_05'] <- 'Plate4'
+controls1 <- controls1 %>%
+  left_join(controls, by = c("Barcode", "plate")) %>%
+  mutate(col = str_extract(Postion, "\\d+")) %>%
+  mutate(row = str_extract(Postion, "[A-Z]+"))
+colnames(controls1)[which(names(controls1) == "SampleName")] <- "sampleID"
+controls1 = subset(controls1, select = c(sampleID, row, col, reads_per_locus))
+controls2 <- controls2 %>%
+  left_join(controls, by = c("Barcode", "plate")) %>%
+  mutate(col = str_extract(Postion, "\\d+")) %>%
+  mutate(row = str_extract(Postion, "[A-Z]+"))
+colnames(controls2)[which(names(controls2) == "SampleName")] <- "sampleID"
+controls2 = subset(controls2, select = c(sampleID, row, col, reads_per_locus))
+controls3 <- controls3 %>%
+  left_join(controls, by = c("Barcode", "plate")) %>%
+  mutate(col = str_extract(Postion, "\\d+")) %>%
+  mutate(row = str_extract(Postion, "[A-Z]+"))
+colnames(controls3)[which(names(controls3) == "SampleName")] <- "sampleID"
+controls3 = subset(controls3, select = c(sampleID, row, col, reads_per_locus))
+controls4 <- controls4 %>%
+  left_join(controls, by = c("Barcode", "plate")) %>%
+  mutate(col = str_extract(Postion, "\\d+")) %>%
+  mutate(row = str_extract(Postion, "[A-Z]+"))
+colnames(controls4)[which(names(controls4) == "SampleName")] <- "sampleID"
+controls4 = subset(controls4, select = c(sampleID, row, col, reads_per_locus))
+
 
 ```
 
-## Track input reads to amplicon
-#### Looks at dimers
+## Plate map
+#### Inspect all samples and controls in their spatial arrangement
+#### This is a heatmap of average reads per locus for each sample
+
+```{r map_all, message = FALSE, echo = FALSE, warning = FALSE}
+
+heat_lab <- c("1","10","30", "100", "300", "1000", "3000")
+heat_break <- c(1, 10, 30, 100, 300, 1000, 3000)
+
+map_all_reads1 <- allele_data_position1 %>%
+  group_by(sampleID, row, col) %>% 
+  summarise(reads_per_locus = mean(reads)) %>%
+  bind_rows(controls1) %>%
+  mutate(control = case_when(
+    grepl(pattern = "Neg", sampleID) ~ "Negative",
+    grepl(pattern = "Pos", sampleID) ~ "Positive",
+    !grepl(pattern = "Control", sampleID) ~ "Sample"))
+map_all_reads1$row <- as.factor(map_all_reads1$row)
+map_all_reads1$col <- as.factor(map_all_reads1$col)
+map_all_reads1$control = factor(map_all_reads1$control, levels = c("Sample", "Negative", "Positive"))
+map_all_reads1 %>%
+    ggplot(aes(x = col, y = row, text = paste(sampleID))) +
+    geom_tile(aes(fill = reads_per_locus, color = control, size = control)) +
+    scale_fill_gradient(low = "black", high = "yellow", trans = "log",
+                        labels = heat_lab, breaks = heat_break) +
+    scale_colour_manual("control", values = c("#00000000", "red", "blue")) + 
+    scale_size_manual("control", values = c(0, 1, 1)) +
+    ylim(rev(levels(map_all_reads1$row))) + 
+    theme_bw() +
+    theme(axis.title = element_blank()) +
+    ggtitle("PLATE1: Avg no. reads per locus, across ALL pools")
+
+
+map_all_reads2 <- allele_data_position2 %>%
+  group_by(sampleID, row, col) %>% 
+  summarise(reads_per_locus = mean(reads)) %>%
+  bind_rows(controls2) %>%
+  mutate(control = case_when(
+    grepl(pattern = "Neg", sampleID) ~ "Negative",
+    grepl(pattern = "Pos", sampleID) ~ "Positive",
+    !grepl(pattern = "Control", sampleID) ~ "Sample"))
+map_all_reads2$row <- as.factor(map_all_reads2$row)
+map_all_reads2$col <- as.factor(map_all_reads2$col)
+map_all_reads2$control = factor(map_all_reads2$control, levels = c("Sample", "Negative", "Positive"))
+map_all_reads2 %>%
+    ggplot(aes(x = col, y = row, text = paste(sampleID))) +
+    geom_tile(aes(fill = reads_per_locus, color = control, size = control)) +
+    scale_fill_gradient(low = "black", high = "yellow", trans = "log",
+                        labels = heat_lab, breaks = heat_break) +
+    scale_colour_manual("control", values = c("#00000000", "red", "blue")) + 
+    scale_size_manual("control", values = c(0, 1, 1)) +
+    ylim(rev(levels(map_all_reads2$row))) + 
+    theme_bw() +
+    theme(axis.title = element_blank()) +
+    ggtitle("PLATE2: Avg no. reads per locus, across ALL pools")
+
+
+map_all_reads3 <- allele_data_position3 %>%
+  group_by(sampleID, row, col) %>% 
+  summarise(reads_per_locus = mean(reads)) %>%
+  bind_rows(controls3) %>%
+  mutate(control = case_when(
+    grepl(pattern = "Neg", sampleID) ~ "Negative",
+    grepl(pattern = "Pos", sampleID) ~ "Positive",
+    !grepl(pattern = "Control", sampleID) ~ "Sample"))
+map_all_reads3$row <- as.factor(map_all_reads3$row)
+map_all_reads3$col <- as.factor(map_all_reads3$col)
+map_all_reads3$control = factor(map_all_reads3$control, levels = c("Sample", "Negative", "Positive"))
+map_all_reads3 %>%
+    ggplot(aes(x = col, y = row, text = paste(sampleID))) +
+    geom_tile(aes(fill = reads_per_locus, color = control, size = control)) +
+    scale_fill_gradient(low = "black", high = "yellow", trans = "log",
+                        labels = heat_lab, breaks = heat_break) +
+    scale_colour_manual("control", values = c("#00000000", "red", "blue")) + 
+    scale_size_manual("control", values = c(0, 1, 1)) +
+    ylim(rev(levels(map_all_reads3$row))) + 
+    theme_bw() +
+    theme(axis.title = element_blank()) +
+    ggtitle("PLATE3: Avg no. reads per locus, across ALL pools")
+
+
+map_all_reads4 <- allele_data_position4 %>%
+  group_by(sampleID, row, col) %>% 
+  summarise(reads_per_locus = mean(reads)) %>%
+  bind_rows(controls4) %>%
+  mutate(control = case_when(
+    grepl(pattern = "Neg", sampleID) ~ "Negative",
+    grepl(pattern = "Pos", sampleID) ~ "Positive",
+    !grepl(pattern = "Control", sampleID) ~ "Sample"))
+map_all_reads4$row <- as.factor(map_all_reads4$row)
+map_all_reads4$col <- as.factor(map_all_reads4$col)
+map_all_reads4$control = factor(map_all_reads4$control, levels = c("Sample", "Negative", "Positive"))
+map_all_reads4 %>%
+    ggplot(aes(x = col, y = row, text = paste(sampleID))) +
+    geom_tile(aes(fill = reads_per_locus, color = control, size = control)) +
+    scale_fill_gradient(low = "black", high = "yellow", trans = "log",
+                        labels = heat_lab, breaks = heat_break) +
+    scale_colour_manual("control", values = c("#00000000", "red", "blue")) + 
+    scale_size_manual("control", values = c(0, 1, 1)) +
+    ylim(rev(levels(map_all_reads4$row))) + 
+    theme_bw() +
+    theme(axis.title = element_blank()) +
+    ggtitle("PLATE4: Avg no. reads per locus, across ALL pools")
+
+
+
+```
+
+## Trends in parasitemia
+#### Combine with qPCR data (if available)
+#### Check if libraries are balanced with parasite density
+
+```{r parasite_density, echo = FALSE, warning = TRUE, message = TRUE}
+
+allele_data_position <- bind_rows(allele_data_position1, allele_data_position2, allele_data_position3, allele_data_position4)
+allele_data_position$'p/uL' <- as.numeric(allele_data_position$'p/uL')
+allele_data_position$log_parasitemia <- log10(allele_data_position$'p/uL')
+
+parasitemia <- allele_data_position %>%
+  group_by(sampleID, log_parasitemia, plate) %>%
+  summarise(total_reads = sum(reads), pass=sum(reads>100), nopass=sum(reads<=100)) %>%
+  group_by(sampleID, log_parasitemia, plate, total_reads) %>%
+  summarize(perc_good = (100*pass/(pass+nopass)))
+ggplot(data = parasitemia) +
+  geom_point(aes(x = log_parasitemia, y = total_reads, color = perc_good)) +
+  scale_color_gradient(low = "darkred", high = "royalblue", 
+                       limits = range(parasitemia$perc_good), name = "% of loci with >100 reads") +
+  facet_wrap(~plate) +
+  ggtitle("Does read coverage correspond to parasite density?") +
+  ylab("Total number of reads") +
+  xlab("Parasitemia (log10 p/uL)")
+
+
+```
+
+## Track reads through filtering
+#### Estimates proportion of primer dimers
 #### grey = input, colored = amplicons
 
 ```{r dimer_check, echo=FALSE, warning = FALSE, message= FALSE}
@@ -123,20 +338,22 @@ ggplot(dimer_check, aes(x=reorder(number, -Input), y=Input)) +
   theme(axis.text = element_text(size = 10), 
           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)) +
   facet_wrap(~prep_date, scales = "free_x") +
-  ggtitle("How many total reads make it to amplicons? (facet by sample prep date)")
+  ggtitle("How many total reads pass ALL filters? (facet by sample prep date)")
 # Plot input/amplicon - percent amplicons
 ggplot(dimer_check) +
   geom_col(aes(x = reorder(number, -perc_amplicons), y= perc_amplicons, fill = neg_control), alpha = 0.8) + 
-  ylab("Proportion of reads that are amplicons") + xlab("Sample number") + 
+  ylab("Proportion of reads that pass ALL filters") + xlab("Sample number") + 
   theme_bw() +
   theme(axis.text = element_text(size = 10), 
           axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)) + 
   scale_y_continuous(limits = c(0,1), expand = c(0, 0)) +
   facet_wrap(~prep_date, scales = "free_x") +
-  ggtitle("What proportion of reads make it to amplicons? (facet by sample prep date)")
+  ggtitle("What proportion of reads pass ALL filters? (facet by sample prep date)")
 
-print("Overall % dimers (already multiplied x100)")
-((sum(dimer_check$Input) - sum(dimer_check$`No Dimers`)) / sum(dimer_check$Input))*100
+print("Percent dimers by sample prep date (in %, already multiplied by 100)")
+dimer_check %>%
+  group_by(prep_date) %>%
+  summarise(dimer_percent = 100*(sum(Input)-sum(`No Dimers`))/sum(Input))
 
 
 ```
@@ -151,7 +368,7 @@ print("Overall % dimers (already multiplied x100)")
 negatives <- allele_data %>% 
   filter(grepl("Neg", SampleName))
 negatives <- negatives %>% 
-  group_by(SampleName, locus) %>% 
+  group_by(SampleName, locus, prep_date) %>% 
   # you have to summarize the reads over the locus first 
   summarize(reads = sum(reads)) %>% 
   ungroup() 
@@ -159,16 +376,16 @@ negatives <- negatives %>%
 # Summarize frequency that N reads per locus at a sample show up
 ggplot(data = negatives, aes(x = reads)) + 
   geom_histogram() +
-  geom_vline(xintercept = 100, linetype='dotted', col = 'red') +
+  geom_vline(xintercept = 100, linetype='dotted', col = 'darkred') +
   xlab("Number of reads at locus") +
   ggtitle("How many total reads do neg.ctrls have across each locus?")
 # Plot same, faceted by sampleID
 ggplot(data = negatives, aes(x = reads)) + 
   geom_histogram() +
-  geom_vline(xintercept = 100, linetype='dotted', col = 'red') +
-  xlab("Reads at locus") +
-  facet_wrap(~SampleName) + 
-  ggtitle("How many reads does each neg.ctrl have across each locus?")
+  geom_vline(xintercept = 100, linetype='dotted', col = 'darkred') +
+  xlab("Number of reads at locus") +
+  facet_wrap(~prep_date) + 
+  ggtitle("How do neg.ctrls compare for each sample prep date?")
   
 # list negative controls with >100 reads/allele   
 bad_negatives <- negatives %>% 
@@ -182,23 +399,27 @@ loci_neg <- negatives %>%
   
 ggplot(loci_neg, aes(y=reads, x=locus)) +
   geom_bar(position="dodge", stat="identity") +
-  geom_hline(yintercept = 100, linetype='dotted', col = 'red') +
+  geom_hline(yintercept = 100, linetype='dotted', col = 'darkred') +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 3)) +
  # ylim(c(0,100)) +
   ggtitle("What is the total number of neg.ctrl reads, by pool?") + 
   facet_wrap(~pool, scales = "free_x")
 
-pool_1B_neg <- pool_1B %>% rename(locus = `locus-pool`) %>% 
-  select(locus, Gene, "Reason to include (if drug resistance: aminoacids)")
-pool_2_neg <- pool_2 %>% rename(locus = `locus-pool`) %>% 
-  select(locus, Gene, "Reason to include (if drug resistance: aminoacids)")
-pool_1B_2_neg <- rbind(pool_1B_neg, pool_2_neg)
+pool_1A_neg <- pool_1A %>% select(`locus-pool`, Category)
+pool_1B_neg <- pool_1B %>% 
+  select(`locus-pool`, "Reason to include (if drug resistance: aminoacids)")
+pool_2_neg <- pool_2 %>% 
+  select(`locus-pool`, "Reason to include (if drug resistance: aminoacids)")
+
+pool_neg <- bind_rows(pool_1A_neg, pool_1B_neg, pool_2_neg)
+pool_neg <- pool_neg %>%
+  rename(locus = `locus-pool`)
 
 loci_neg_info <- loci_neg %>% 
-  left_join(pool_1B_2_neg) %>% 
+  left_join(pool_neg) %>% 
   filter(reads >= 100) %>%
   arrange(desc(reads))
-print("List of pool 1B/2 loci with >100 reads (summed over all negative controls)")
+print("List of pool 1A/1B/2 loci with >100 reads (summed over all negative controls)")
 loci_neg_info
 
 
@@ -214,10 +435,8 @@ loci_neg_info
 positives <- allele_data %>% 
   filter(grepl("Pos", sampleID))
 positives <- positives %>% 
-  group_by(sampleID, locus) %>% 
-  # you have to summarize the reads over the locus first 
-  summarize(reads = sum(reads)) %>% 
-  ungroup() 
+  group_by(sampleID, locus, allele) %>% 
+  summarize(reads = sum(reads))
 
 ## Look at clonality
 pos_clone <- allele_data %>% 
@@ -321,7 +540,7 @@ ggplot(amp_cov_pool_100_norm, aes(x=totreads, y = norm, color = neg_control, lab
 
 ## Species check
 #### Controls should be Pfal, and not other species
-#### NonPfal detection in samples suggests mixed infection
+#### NonPfal detection in samples suggests mixed infection (for downstream analysis)
 #### These loci will be filtered out downstream (loci 1AB)
 
 ```{r species_check, echo = F, warning = FALSE, message= FALSE}
@@ -337,32 +556,27 @@ species_check <- allele_data %>%
   filter(locus %in% nonpfal)
 
 # Plot for all samples
-ggplot(species_check, aes(x=sampleID, y = reads, label = number))+
-  geom_point() +
-  scale_y_log10() + 
-  xlab("Sample No.") +
-  ylab("Reads") +
+ggplot(species_check, aes(x = reads))+
+  geom_histogram() +
+  xlab("Number of reads") +
+  ylab("Number of samples") +
   facet_wrap(~locus) +
-  ggtitle("Are there any non-Pfal reads?") + 
-  geom_label_repel()
+  ggtitle("Are there any non-Pfal reads?")
 
 # Do your controls have these reads?
 species_check_ctrl <- species_check %>% 
   filter(grepl("Control", sampleID))
-ggplot(species_check_ctrl, aes(x=sampleID, y = reads, label = SampleName))+
-  geom_point() +
-  scale_y_log10() + 
-  xlab("Sample No.") +
-  ylab("Reads") +
+ggplot(species_check_ctrl, aes(x = reads))+
+  geom_histogram() +
+  xlab("Number of reads") +
+  ylab("Number of samples") +
   facet_wrap(~locus) +
-  theme(axis.text.x = element_blank()) +
-  ggtitle("Are there any non-Pfal reads in the controls?") + 
-  geom_label_repel()
+  ggtitle("Are there any non-Pfal reads in the controls?")
 
 
 ```
 
-## Look at how each individual pool amplified
+## Look at individual pools
 ### Pool 1A 
 
 ```{r pool1A, echo = F, warning = FALSE, message= FALSE}
@@ -399,9 +613,6 @@ locus_cov_100 = allele_data %>%
   group_by(sampleID, pool) %>% 
   summarize(totreads = sum(reads), n50 = sum(reads>50), n100 = sum(reads>100)) 
 
-# Merge with qpcr
-# locus_cov_100 <- locus_cov_100 %>% 
-#  left_join(qpcr) 
 
 # pool 1A, normalize reads using 100 reads per amplicon as the criteria
 amp_cov_pool_100_norm_1A <- locus_cov_100 %>% 
@@ -567,46 +778,7 @@ bad_5
 
 ```
 
-## Contamination sleuthing
-#### Investigate shared alleles/ASVs between controls and samples
-#### Identify potential sample cross-contamination (TBD)
-#### Quantify level of contamination
-
-```{r contamination, echo = F, warning = F} 
-
-# Pull ASVs with >= 10 reads in neg.ctrls
-neg_asv <- allele_data %>% 
-  filter(grepl("Neg", SampleName)) %>% 
-  select(SampleName, asv, allele, reads) %>% 
-  filter(reads >= 10) %>%
-  pull(asv)
-# T/F shared ASVs between neg.ctrl and samples
-sample_asv <- allele_data %>% 
-  filter(!grepl("Control", sampleID)) %>% 
-  select(sampleID, locus, asv, allele, reads) %>%
-  mutate(shared = grepl(neg_asv, asv))
-sample_asv2 <- sample_asv %>%
-  distinct(sampleID, locus, asv, shared, .keep_all = TRUE) %>%
-  group_by(sampleID, locus, shared) %>%
-  summarise(total_reads = sum(reads), div = n_distinct(asv)) %>%
-  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
-  arrange(shared)
-
-color_fill <- c("FALSE" = "gray", "TRUE" = "red")
-
-ggplot(data = sample_asv2, aes(x = div, y = total_reads, color = shared)) +
-  geom_point(position = "jitter", size = 0.5) +
-  scale_color_manual(values = color_fill, name = "ASV also in neg.ctrl") +
-  scale_y_log10() +
-  ylab("Total reads in locus/sample") +
-  xlab("Number of distinct ASVs in a locus/sample") +
-  ggtitle("Do higher read counts/diversity correspond with neg.ctrl contamination?") +
-  facet_wrap(~prep_date, scales = "free")
-
-
-```
-
-## Create list of samples that fail any of the QC checks by pool 
+## List samples that fail any of the QC checks
 #### Reprep if <50% amplicons with >100 reads
 #### Repool if >50% but <75% amplicons with >100 reads
 
@@ -675,28 +847,6 @@ locus_no2 <- n_distinct(data_filt2$locus)
 exclude_locus2 <- setdiff(data_filt$locus, data_filt2$locus)
 print(exclude_locus2)
 
-
-```
-
-## Extra
-### rough MOI estimates 
-##### Number of alleles per locus/sample (NOT moire)
-
-```{r extra, echo = FALSE, warning = FALSE}
-
-ggplot(data = allele_table, aes(x = total_alleles)) +
-  geom_histogram() +
-  ggtitle("UNFILTERED: Alleles per locus per sample")
-
-allele_table2 <- data_filt %>% 
-  group_by(locus, sampleID) %>% 
-  summarize(total_alleles = n_distinct(allele)) %>% 
-  arrange(-total_alleles)
-
-ggplot(data = allele_table2, aes(x = total_alleles)) +
-  geom_histogram() +
-  ggtitle("FILTERED: Alleles per locus per sample")
-  
 
 ```
 
