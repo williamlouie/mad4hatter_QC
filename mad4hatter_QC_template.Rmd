@@ -5,7 +5,7 @@ output:
     toc: true
     toc_depth: 2
     toc_float: true
-date: "2023-09-11"
+date: "2023-09-18"
 ---
 
 ```{r load_libs, include=FALSE}
@@ -309,6 +309,7 @@ ggplot(data = parasitemia) +
   scale_color_gradient(low = "darkred", high = "royalblue", 
                        limits = range(parasitemia$perc_good), name = "% of loci with >100 reads") +
   facet_wrap(~plate) +
+  scale_y_log10() +
   ggtitle("Does read coverage correspond to parasite density?") +
   ylab("Total number of reads") +
   xlab("Parasitemia (log10 p/uL)")
@@ -428,28 +429,44 @@ loci_neg_info
 ## Positive controls
 #### Using a known parasite strain at a known density
 #### Alleles should be known, and monoclonal
+##### Presence of polyclonals suggest contamination => see plate map
+##### <10 (arbitratry) reads or at <1% (arbitrary) of locus should be filtered out
 
 ```{r pos_ctrls, echo = FALSE, warning = F, message = F}
 
 # Let's look at the positive controls 
 positives <- allele_data %>% 
   filter(grepl("Pos", sampleID))
-positives <- positives %>% 
-  group_by(sampleID, locus, allele) %>% 
-  summarize(reads = sum(reads))
+positives_prev <- positives %>% 
+  distinct(sampleID, locus, asv, allele, .keep_all = TRUE) %>%
+  group_by(sampleID, locus) %>%
+  mutate(read_fraction = 100*reads/sum(reads))%>%
+  mutate(n.alleles = n()) %>%
+  mutate(Clone = ifelse(n.alleles == 1, "Mono", "Poly")) %>%
+  mutate(prep_date = word(sampleID, 6,8, sep = "_"))
+
+ggplot(positives_prev, aes(x=read_fraction, y=reads, color = Clone)) +
+  geom_point() +
+  scale_y_log10() + 
+  facet_wrap(~prep_date) +
+  xlab("Proportion at locus (%)") +
+  ylab("No. reads at locus") +
+  theme_bw() +
+  geom_vline(aes(xintercept = 1), linetype = "dashed", color = "darkred") +
+  geom_hline(aes(yintercept = 10), linetype = "dashed", color = "darkred") 
+  
+
 
 ## Look at clonality
 pos_clone <- allele_data %>% 
   filter(grepl("Pos", sampleID)) %>% 
-  distinct(sampleID, locus, asv, .keep_all = TRUE) %>%
-  group_by(sampleID, locus) %>% 
+  distinct(sampleID, locus, SampleName, prep_date, asv, .keep_all = TRUE) %>%
+  group_by(sampleID, SampleName, locus, prep_date) %>% 
   summarise(total_alleles = n()) %>%
   mutate(Clone = ifelse(total_alleles == 1, "Mono", "Poly"))
 pos_clone <- pos_clone %>% 
-  group_by(sampleID) %>% 
-  count(Clone) %>%
-  mutate(prep_date = word(sampleID, 6,8, sep = "_")) %>%
-  mutate(number = word(sampleID, -1, sep = "_"))
+  group_by(sampleID, SampleName, prep_date) %>% 
+  count(Clone)
 pos_clone_wide <- tidyr::spread(pos_clone, Clone, n)
 pos_clone_wide[is.na(pos_clone_wide)] <- 0
 pos_clone_wide %<>% mutate(Total_alleles = Mono + Poly) %>% 
@@ -461,9 +478,9 @@ print(sprintf("Mean of total locus = %s, Mean prop. of monoclonal loci = %s, Mea
               round(mean(pos_clone_wide$Poly_prop),2)))
 plot_pos_clones <- function(pos_clone){
   g_pos <- pos_clone %>%
-  ggplot(aes(x= sampleID, y= n)) +
+  ggplot(aes(x= SampleName, y= n)) +
   geom_col(aes(fill = Clone)) +
-  theme(axis.text.y = element_text(size = 8), axis.text.x = element_blank()) +
+  theme(axis.text.y = element_text(size = 8), axis.text.x = element_text(angle = 0)) +
   scale_y_continuous(name = "Locus No.", breaks = seq(0,200, by = 50)) +
   facet_wrap(~prep_date, scales = "free_x")
   g_pos
@@ -622,9 +639,11 @@ amp_cov_pool_100_norm_1A <- locus_cov_100 %>%
   mutate(neg_control = grepl("Neg", sampleID)) %>% 
   mutate(norm = n100/max1A)
 
+color_neg <- c("TRUE" = "darkred", "FALSE" = "blue")
 # Plot
 ggplot(amp_cov_pool_100_norm_1A, aes(x=totreads, y = norm, color = neg_control, label=sampleID))+
-  geom_point()+
+  geom_point() +
+  scale_color_manual(values = color_neg) +
   scale_x_log10() + 
   xlab("Total number of reads") +
   ylab("Proportion of pool 1A loci with >100 reads") +
@@ -684,9 +703,11 @@ amp_cov_pool_100_norm_5 <- locus_cov_100 %>%
     mutate(pool = "1B") %>% 
     select(sampleID, pool, totreads, n50, n100, neg_control, norm)
 
+color_neg <- c("TRUE" = "darkred", "FALSE" = "blue")
 # Plot
 ggplot(amp_cov_pool_100_norm_5, aes(x=totreads, y = norm, color = neg_control, label=sampleID))+
-  geom_point()+
+  geom_point() +
+  scale_color_manual(values = color_neg) +
   scale_x_log10() +
   ggtitle("For each sample, what is the proportion of pool 5 loci with >100 reads?") +
   geom_label_repel() +
@@ -718,6 +739,7 @@ bad_5
 ```
 
 ### Pool 2 
+#### Skip if not used
 
 ```{r pool2, echo = F, warning = FALSE}
 
@@ -815,7 +837,7 @@ write.csv(re_prep, "/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.loc
 write.csv(re_pool, "/Users/williamlouie/Dropbox/My Mac (Williams-MacBook-Pro.local)/Downloads/gambia_dataset/06_23_run/gambia_failedQC_repool.csv", row.names = FALSE)
 
 ```
-## Filtering
+## Hypothetical filtering
 #### Remove bad samples
 #### Remove bad loci
 #### Remove controls
