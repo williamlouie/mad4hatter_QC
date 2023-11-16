@@ -663,6 +663,36 @@ print("List of samples that do not have >75% loci with >100 reads, in pool 1A")
 bad_1A
 
 
+### Tradeoffs between n100 proportion & sample retained, find a cutoff for n100
+n_table <- locus_cov_100 %>%
+  group_by(sampleID, locus) %>% 
+  summarize(total_reads = sum(reads)) %>%
+  mutate(n100 = ifelse(total_reads >= 100, 1, 0))
+
+n_count <-  n_table  %>%
+  group_by(sampleID) %>%
+  summarise(
+    n100_0_count = sum(n100 == 0),
+    n100_1_count = sum(n100 == 1),
+    n100_proportion = n100_1_count / n())
+
+# Create a data frame to store the results
+results <- data.frame(X = numeric(), SampleCount = numeric())
+
+# Loop through different threshold values
+for (X in 0:100) {
+  filtered_data <- n_count %>%
+    filter(n100_proportion >= (X / 100))  # Convert X to a proportion
+
+  # Add X and the count of samples exceeding the threshold to the data frame
+  results <- rbind(results, data.frame(X = X, SampleCount = nrow(filtered_data)))
+}
+
+# Create the plot showing tradeoffs between n100 proportion & sample retained
+ggplot(results, aes(x = SampleCount, y = X)) +
+  geom_line() +
+  labs(y = "Proportion of loci over 100 reads", x = "Sample count") +
+  scale_x_continuous(breaks = seq(0, 1250, 100))
 ```
 
 ### Pool 5 
